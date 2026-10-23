@@ -1,41 +1,155 @@
-/* JoyGroup storefront prototype.
-   Everything that would come from the server lives behind three small things:
-   JG_DATA (catalog), JG_PRICES (client-only prices) and the `state` object below (session, cart, saved).
-   Swap those for real API calls; the markup and CSS stay as they are. */
+/* JoyGroup storefront.
+   Catalog, prices, login and orders come from the backend API (`/api`, see docs/reports/04-storefront-api.md).
+   The browser keeps only the login token, the cart ({ variationId: qty }) and saved products.
+   Prices exist only in the signed-in catalog (`/api/client/catalog`); a guest never receives them. */
 (function () {
   'use strict';
 
-  const DATA = window.JG_DATA;
-  const PRICES = window.JG_PRICES || {};
+  const CONFIG = window.JG_CONFIG || {};
+  const API = String(CONFIG.apiBase || '').replace(/\/+$/, '') + '/api';
   const $ = (sel, root = document) => root.querySelector(sel);
   const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
   const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
   const params = new URLSearchParams(location.search);
   const page = document.body.dataset.page;
 
-  /* ---------- State (localStorage stands in for the backend session) ---------- */
-  const store = {
+  /* ---------- Browser storage ---------- */
+  const storeIn = (area) => ({
     get(key, fallback) {
-      try { const v = JSON.parse(localStorage.getItem(key)); return v === null ? fallback : v; } catch (e) { return fallback; }
+      try { const v = JSON.parse(area().getItem(key)); return v === null ? fallback : v; } catch (e) { return fallback; }
     },
-    set(key, value) { try { localStorage.setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ } },
-  };
+    set(key, value) { try { area().setItem(key, JSON.stringify(value)); } catch (e) { /* private mode */ } },
+    del(key) { try { area().removeItem(key); } catch (e) { /* private mode */ } },
+  });
+  const store = storeIn(() => localStorage);
+  const tabStore = storeIn(() => sessionStorage);   // a login without "remember me" lives until the tab closes
+
+  /* ---------- Language: Armenian by default, Russian by the header switch. Texts live in js/i18n.js ---------- */
+  const LANGS = ['hy', 'ru'];
+  const lang = LANGS.includes(store.get('jg_lang', 'hy')) ? store.get('jg_lang', 'hy') : 'hy';
+  const DICT = window.JG_I18N || {};
+  /* t('cart.option', { label, option }): the text in the chosen language, `{name}` filled in. A missing key shows itself. */
+  function t(key, vars = {}) {
+    const entry = DICT[key];
+    const text = entry ? (entry[lang] !== undefined ? entry[lang] : entry.hy) : key;
+    if (typeof text === 'function') return text(vars);
+    return text.replace(/\{(\w+)\}/g, (m, name) => (name in vars ? vars[name] : m));
+  }
+  /* Static texts of the HTML pages: `data-i18n="key"` sets the text, `data-i18n-attr="aria-label:key,placeholder:key"` the attributes. */
+  function translatePage() {
+    document.documentElement.lang = lang;
+    $$('[data-i18n]').forEach((el) => { el.textContent = t(el.dataset.i18n); });
+    $$('[data-i18n-attr]').forEach((el) => el.dataset.i18nAttr.split(',').forEach((pair) => {
+      const [attr, key] = pair.split(':').map((s) => s.trim());
+      el.setAttribute(attr, t(key));
+    }));
+  }
+
   const state = {
-    authed: false,  // демо без цен: всегда гость
+    token: CONFIG.staticDemo ? null : (store.get('jg_token', null) || tabStore.get('jg_token', null)),
+    profile: store.get('jg_profile', null) || tabStore.get('jg_profile', null),
     cart: store.get('jg_cart', {}),   // { variationId: qty }
     wish: store.get('jg_wish', []),   // [productId]
   };
+  state.authed = !!state.token;
   const saveCart = () => { store.set('jg_cart', state.cart); updateBadges(); };
 
-  /* ---------- Catalog helpers ---------- */
-  const productById = new Map(DATA.products.map((p) => [p.id, p]));
-  const catBySlug = new Map(DATA.categories.map((c) => [c.slug, c]));
-  const variationIndex = new Map();
-  DATA.products.forEach((p) => p.variations.forEach((v) => variationIndex.set(String(v.id), { p, v })));
+  function saveSession(token, profile, remember) {
+    const keep = remember ? store : tabStore;
+    keep.set('jg_token', token); keep.set('jg_profile', profile);
+    Object.assign(state, { token, profile, authed: true });
+  }
+  function saveProfile(profile) {
+    (store.get('jg_token', null) ? store : tabStore).set('jg_profile', profile);
+    state.profile = profile;
+  }
+  function dropSession() {
+    [store, tabStore].forEach((s) => { s.del('jg_token'); s.del('jg_profile'); });
+    Object.assign(state, { token: null, profile: null, authed: false });
+  }
 
-  const num = (n) => n.toLocaleString('ru-RU').replace(/[\u00a0\u202f]/g, ' ');
+  /* ---------- API ---------- */
+  /* Refusals carry the server's `message`, already in the language of the request. */
+  class ApiError extends Error {
+    constructor(status, data) {
+      super((data && data.message) || t(status ? 'err.server' : 'err.network'));
+      this.status = status; this.code = data && data.code; this.data = data || {};
+    }
+  }
+  async function api(path, { method = 'GET', body, headers = {} } = {}) {
+    if (CONFIG.staticDemo) return staticApi(path, method);
+    const h = { Accept: 'application/json', 'Accept-Language': lang, ...headers };
+    if (body !== undefined) h['Content-Type'] = 'application/json';
+    if (state.token) h.Authorization = `Bearer ${state.token}`;
+    let res;
+    try {
+      res = await fetch(API + path, { method, headers: h, body: body === undefined ? undefined : JSON.stringify(body) });
+    } catch (e) { throw new ApiError(0, null); }
+    const data = res.status === 204 ? null : await res.json().catch(() => null);
+    if (res.status === 401 && state.token) dropSession();   // token expired, login disabled or signed out elsewhere
+    if (!res.ok) throw new ApiError(res.status, data);
+    return { status: res.status, data };
+  }
+  /* Демо без бэкенда: отдаётся только гостевой каталог из файла, остальные запросы — отказ с понятным текстом. */
+  async function staticApi(path, method) {
+    if (method === 'GET' && path === '/catalog') {
+      let res;
+      try { res = await fetch(`data/catalog-${lang}.json`); } catch (e) { throw new ApiError(0, null); }
+      if (!res.ok) throw new ApiError(res.status, null);
+      return { status: 200, data: (await res.json()).data };
+    }
+    throw new ApiError(503, { message: t('demo.loginOff', { phone: CONTACT.phone }), code: 'demo' });
+  }
+  /* A client request failed: on 401 go back to the login page, otherwise say what happened. */
+  function fail(err) {
+    if (err.status === 401) { location.href = `login.html?next=${page}`; return; }
+    toast(err.message);
+  }
+  const cartItems = () => Object.entries(state.cart)
+    .filter(([, qty]) => qty > 0)
+    .map(([vid, qty]) => ({ variation_id: Number(vid), quantity: qty }));
+  /* Server-side cart: the organization's prices and totals with VAT. Items the client can no longer order leave the cart. */
+  async function quoteCart() {
+    const { data } = await api('/client/cart', { method: 'POST', body: { items: cartItems() } });
+    if (data.unavailable && data.unavailable.length) {
+      data.unavailable.forEach((vid) => { delete state.cart[vid]; });
+      saveCart();
+      toast(t('cart.removed', { n: data.unavailable.length }));
+    }
+    return data;
+  }
+
+  /* ---------- Catalog ---------- */
+  let DATA = { categories: [], products: [], home: { bestsellers: [], newest: [] } };
+  let PRICES = {};   // { variationId: price with VAT }, signed-in clients only
+  let productById = new Map(), catBySlug = new Map(), variationIndex = new Map();
+
+  async function loadCatalog() {
+    if (state.authed) {
+      try {
+        const { data } = await api('/client/catalog');
+        PRICES = data.prices || {};
+        return data;
+      } catch (e) {
+        if (e.status !== 401) throw e;   // signed out meanwhile: show the guest catalog
+      }
+    }
+    PRICES = {};
+    return (await api('/catalog')).data;
+  }
+  function useCatalog(data) {
+    DATA = { ...data, categories: data.categories.filter((c) => c.count > 0) };   // empty categories stay off the menus
+    productById = new Map(DATA.products.map((p) => [p.id, p]));
+    catBySlug = new Map(DATA.categories.map((c) => [c.slug, c]));
+    variationIndex = new Map();
+    DATA.products.forEach((p) => p.variations.forEach((v) => variationIndex.set(String(v.id), { p, v })));
+  }
+
+  const round2 = (n) => Math.round(n * 100) / 100;
+  const num = (n) => n.toLocaleString('ru-RU', { maximumFractionDigits: 2 }).replace(/[  ]/g, ' ');
   const money = (n) => num(n) + ' ֏';
   const priceOf = (vid) => (state.authed ? PRICES[vid] : undefined);
+  const canOrder = (v) => v.inStock || !!CONFIG.orderOutOfStock;
   const priceRange = (p) => {
     const list = p.variations.map((v) => priceOf(v.id)).filter((n) => n !== undefined);
     if (!list.length) return null;
@@ -43,12 +157,11 @@
     return min === max ? money(min) : `${num(min)} – ${money(max)}`;
   };
   const mainCat = (p) => catBySlug.get(p.cats[0]);
-  const variantCount = (n) => `${n} տարբերակ`;
+  const variantCount = (n) => t('count.variants', { n });
   const cartLines = () => Object.entries(state.cart)
     .map(([vid, qty]) => ({ ...variationIndex.get(vid), vid, qty }))
     .filter((l) => l.p && l.qty > 0);
   const cartQty = () => cartLines().reduce((s, l) => s + l.qty, 0);
-  const cartTotal = () => cartLines().reduce((s, l) => s + l.qty * (PRICES[l.vid] || 0), 0);
 
   /* ---------- Icons ---------- */
   const PATHS = {
@@ -83,8 +196,13 @@
   const CONTACT = {
     phone: '+374 33 710703', phoneHref: 'tel:+37433710703',
     email: 'joygroup794@gmail.com',
-    address: 'Ք. Երևան, Թբլիսյան խճ. 35 ա',
-    hours: 'Երկ–Ուրբ՝ 10:00 – 18:00',
+    address: t('contact.address'),   // the address and hours in both languages are in js/i18n.js
+    hours: t('contact.hours'),
+  };
+
+  const contactRow = (ic, label, value, href) => {
+    const inner = `<span class="circle">${icon(ic)}</span><span><small>${label}</small>${value}</span>`;
+    return href ? `<a href="${href}">${inner}</a>` : `<div>${inner}</div>`;
   };
 
   /* ---------- Header, footer, chrome ---------- */
@@ -92,58 +210,66 @@
   const cur = (name) => (page === name ? ' aria-current="page"' : '');
   const catLinks = (cls = '') => DATA.categories.map((c) =>
     `<a class="${c.parent ? 'sub ' : ''}${cls}" href="shop.html?cat=${c.slug}">${esc(c.name)} <span>${c.count}</span></a>`).join('');
-  const logo = (cls = '') => `<a href="index.html" class="logo ${cls}" aria-label="JoyGroup, գլխավոր էջ"><img src="assets/logo/joygroup-logo.png" alt="JoyGroup" width="640" height="351"></a>`;
+  const logo = (cls = '') => `<a href="index.html" class="logo ${cls}" aria-label="${t('nav.logo')}"><img src="assets/logo/joygroup-logo.png" alt="JoyGroup" width="640" height="351"></a>`;
+  /* ՀԱՅ / РУС: each button is labelled in its own language, so it reads the same on both versions. */
+  const langSwitch = () => `
+    <div class="lang-switch" role="group" aria-label="${t('lang.label')}">
+      <button type="button" data-lang="hy" lang="hy" aria-pressed="${lang === 'hy'}" aria-label="Հայերեն">ՀԱՅ</button>
+      <button type="button" data-lang="ru" lang="ru" aria-pressed="${lang === 'ru'}" aria-label="Русский">РУС</button>
+    </div>`;
 
   function renderHeader() {
     $('#header').innerHTML = `
       <header class="site-header">
         <div class="wrap">
-          <button class="icon-btn menu-toggle" id="menuToggle" aria-label="Մենյու" aria-expanded="false">${icon('menu')}</button>
+          <button class="icon-btn menu-toggle" id="menuToggle" aria-label="${t('nav.menu')}" aria-expanded="false">${icon('menu')}</button>
           ${logo()}
-          <nav class="main-nav" aria-label="Գլխավոր մենյու">
-            <a href="index.html"${cur('home')}>Գլխավոր</a>
+          <nav class="main-nav" aria-label="${t('nav.mainMenu')}">
+            <a href="index.html"${cur('home')}>${t('nav.home')}</a>
             <div class="nav-drop" id="shopDrop">
-              <button type="button" aria-expanded="false"${page === 'shop' ? ' aria-current="page"' : ''}>Խանութ ${icon('chevron', 'icon-sm')}</button>
+              <button type="button" aria-expanded="false"${page === 'shop' ? ' aria-current="page"' : ''}>${t('nav.shop')} ${icon('chevron', 'icon-sm')}</button>
               <div class="nav-drop-menu">
-                <a href="shop.html">Բոլոր ապրանքները <span>${DATA.products.length}</span></a>
+                <a href="shop.html">${t('nav.allProducts')} <span>${DATA.products.length}</span></a>
                 ${catLinks()}
               </div>
             </div>
-            <a href="about.html"${cur('about')}>Մեր մասին</a>
-            <a href="contact.html"${cur('contact')}>Կապ մեզ հետ</a>
+            <a href="about.html"${cur('about')}>${t('nav.about')}</a>
+            <a href="contact.html"${cur('contact')}>${t('nav.contact')}</a>
           </nav>
           <div class="header-actions">
-            <button class="icon-btn" id="searchToggle" aria-label="Որոնում" aria-expanded="false">${icon('search')}</button>
-            <a class="icon-btn hide-m" href="wishlist.html" aria-label="Հիշվածներ">${icon('heart')}<span class="badge" data-badge="wish" hidden></span></a>
-            <a class="icon-btn hide-m" href="cart.html" aria-label="Զամբյուղ">${icon('bag')}<span class="badge" data-badge="cart" hidden></span></a>
+            ${langSwitch()}
+            <button class="icon-btn" id="searchToggle" aria-label="${t('nav.search')}" aria-expanded="false">${icon('search')}</button>
+            <a class="icon-btn hide-m" href="wishlist.html" aria-label="${t('nav.wishlist')}">${icon('heart')}<span class="badge" data-badge="wish" hidden></span></a>
+            <a class="icon-btn hide-m" href="cart.html" aria-label="${t('nav.cart')}">${icon('bag')}<span class="badge" data-badge="cart" hidden></span></a>
             ${state.authed
-              ? `<a class="btn btn-secondary btn-sm" href="account.html">${icon('user', 'icon-sm')} Անձնական էջ</a>`
-              : '<a class="btn btn-primary btn-sm" href="login.html">Մուտք</a>'}
+              ? `<a class="btn btn-secondary btn-sm" href="account.html">${icon('user', 'icon-sm')} ${t('nav.account')}</a>`
+              : `<a class="btn btn-primary btn-sm" href="login.html">${t('nav.login')}</a>`}
           </div>
         </div>
       </header>
       <div class="search-sheet" id="searchSheet">
         <div class="wrap on-pink">
           <form action="shop.html" role="search">
-            <label class="sr-only" for="searchInput">Որոնում</label>
-            <input class="input" id="searchInput" name="q" type="search" placeholder="Որոնել ապրանք…" autocomplete="off">
+            <label class="sr-only" for="searchInput">${t('nav.search')}</label>
+            <input class="input" id="searchInput" name="q" type="search" placeholder="${t('search.placeholder')}" autocomplete="off">
           </form>
           <div class="search-results" id="searchResults"></div>
         </div>
       </div>
-      <nav class="mobile-menu" id="mobileMenu" aria-label="Մենյու">
-        <a href="index.html">Գլխավոր</a>
-        <a href="shop.html">Խանութ <span>${DATA.products.length}</span></a>
+      <nav class="mobile-menu" id="mobileMenu" aria-label="${t('nav.menu')}">
+        <a href="index.html">${t('nav.home')}</a>
+        <a href="shop.html">${t('nav.shop')} <span>${DATA.products.length}</span></a>
         ${catLinks('sub')}
-        <a href="about.html">Մեր մասին</a>
-        <a href="contact.html">Կապ մեզ հետ</a>
-        <a href="${accountHref()}">${state.authed ? 'Անձնական էջ' : 'Մուտք'}</a>
+        <a href="about.html">${t('nav.about')}</a>
+        <a href="contact.html">${t('nav.contact')}</a>
+        <a href="${accountHref()}">${state.authed ? t('nav.account') : t('nav.login')}</a>
+        ${langSwitch()}
       </nav>
-      <nav class="tab-bar" aria-label="Արագ անցում">
-        <a href="shop.html"${cur('shop')}>${icon('shop')}Խանութ</a>
-        <a href="wishlist.html"${cur('wishlist')}>${icon('heart')}Հիշվածներ<span class="badge" data-badge="wish" hidden></span></a>
-        <a href="cart.html"${cur('cart')}>${icon('bag')}Զամբյուղ<span class="badge" data-badge="cart" hidden></span></a>
-        <a href="${accountHref()}"${cur('account')}${cur('login')}>${icon('user')}Անձնական էջ</a>
+      <nav class="tab-bar" aria-label="${t('nav.quick')}">
+        <a href="shop.html"${cur('shop')}>${icon('shop')}${t('nav.shop')}</a>
+        <a href="wishlist.html"${cur('wishlist')}>${icon('heart')}${t('nav.wishlist')}<span class="badge" data-badge="wish" hidden></span></a>
+        <a href="cart.html"${cur('cart')}>${icon('bag')}${t('nav.cart')}<span class="badge" data-badge="cart" hidden></span></a>
+        <a href="${accountHref()}"${cur('account')}${cur('login')}>${icon('user')}${t('nav.accountShort')}</a>
       </nav>`;
 
     const drop = $('#shopDrop'), dropBtn = $('button', drop);
@@ -175,7 +301,7 @@
       const hits = q ? DATA.products.filter((p) => p.name.toLowerCase().includes(q)).slice(0, 6) : [];
       $('#searchResults').innerHTML = hits.map((p) =>
         `<a href="product.html?id=${p.id}"><img src="${p.image}" alt=""><span>${esc(p.name)}</span></a>`).join('')
-        || (q ? '<p class="muted">Ոչինչ չի գտնվել</p>' : '');
+        || (q ? `<p class="muted">${t('search.none')}</p>` : '');
     });
   }
 
@@ -186,7 +312,7 @@
           <div class="footer-grid">
             <div>
               ${logo('logo-chip')}
-              <p style="margin-top:16px;max-width:34ch">Ծննդյան և տոնական պարագաներ՝ մեծածախ, մեկ վայրում։</p>
+              <p style="margin-top:16px;max-width:34ch">${t('footer.tagline')}</p>
               <ul class="footer-contacts">
                 <li><a href="${CONTACT.phoneHref}">${icon('phone', 'icon-sm')} ${CONTACT.phone}</a></li>
                 <li><a href="mailto:${CONTACT.email}">${icon('mail', 'icon-sm')} ${CONTACT.email}</a></li>
@@ -195,28 +321,28 @@
               </ul>
             </div>
             <div>
-              <h3>Խանութ</h3>
+              <h3>${t('nav.shop')}</h3>
               <ul>${DATA.categories.filter((c) => !c.parent).map((c) => `<li><a href="shop.html?cat=${c.slug}">${esc(c.name)}</a></li>`).join('')}</ul>
             </div>
             <div>
-              <h3>Ընկերություն</h3>
+              <h3>${t('footer.company')}</h3>
               <ul>
-                <li><a href="about.html">Մեր մասին</a></li>
-                <li><a href="contact.html">Կապ մեզ հետ</a></li>
-                <li><a href="signup.html">Դառնալ հաճախորդ</a></li>
-                <li><a href="terms.html">Առաքում և վերադարձ</a></li>
+                <li><a href="about.html">${t('nav.about')}</a></li>
+                <li><a href="contact.html">${t('nav.contact')}</a></li>
+                <li><a href="signup.html">${t('nav.signup')}</a></li>
+                <li><a href="terms.html">${t('nav.terms')}</a></li>
               </ul>
             </div>
             <div>
-              <h3>Հաճախորդին</h3>
+              <h3>${t('footer.clients')}</h3>
               <ul>
-                <li><a href="${accountHref()}">Անձնական էջ</a></li>
-                <li><a href="cart.html">Զամբյուղ</a></li>
-                <li><a href="wishlist.html">Հիշվածներ</a></li>
+                <li><a href="${accountHref()}">${t('nav.account')}</a></li>
+                <li><a href="cart.html">${t('nav.cart')}</a></li>
+                <li><a href="wishlist.html">${t('nav.wishlist')}</a></li>
               </ul>
             </div>
           </div>
-          <div class="footer-bottom"><span>Cnund.JoyGroup © 2026</span><span>Գները տեսանելի են միայն գրանցված հաճախորդներին</span></div>
+          <div class="footer-bottom"><span>Cnund.JoyGroup © 2026</span><span>${t('footer.pricesNote')}</span></div>
         </div>
       </footer>`;
   }
@@ -244,14 +370,14 @@
     const cat = mainCat(p), range = priceRange(p), wished = state.wish.includes(p.id);
     return `
       <article class="card${p.inStock ? '' : ' sold'}">
-        ${p.inStock ? '' : '<span class="tag tag-sold">Առկա չէ</span>'}
-        <button class="wish-btn" type="button" data-wish="${p.id}" aria-pressed="${wished}" aria-label="Հիշել">${icon('heart', 'icon-sm')}</button>
-        <div class="ph"><img loading="lazy" src="${p.image}" alt="${esc(p.name)}"></div>
+        ${p.inStock ? '' : `<span class="tag tag-sold">${t('stock.out')}</span>`}
+        <button class="wish-btn" type="button" data-wish="${p.id}" aria-pressed="${wished}" aria-label="${t('card.wish')}">${icon('heart', 'icon-sm')}</button>
+        <div class="ph">${p.image ? `<img loading="lazy" src="${p.image}" alt="${esc(p.name)}">` : ''}</div>
         <div class="card-body">
           <h3 class="card-name"><a href="product.html?id=${p.id}">${esc(p.name)}</a></h3>
           <div class="card-meta">${esc(cat ? cat.name : '')}${p.single ? '' : ' · ' + variantCount(p.variations.length)}</div>
           ${range ? `<div class="card-price">${range}</div>`
-                  : `<div class="card-lock">${icon('lock', 'icon-sm')} Գինը՝ մուտքից հետո</div>`}
+                  : `<div class="card-lock">${icon('lock', 'icon-sm')} ${t('card.priceLocked')}</div>`}
         </div>
       </article>`;
   }
@@ -259,9 +385,9 @@
 
   function stepper(vid, qty, cls = '') {
     return `<div class="stepper ${cls}" data-stepper="${vid}">
-      <button type="button" data-step="-1" aria-label="Պակասեցնել">${icon('minus', 'icon-sm')}</button>
-      <input type="number" inputmode="numeric" min="0" max="9999" value="${qty}" aria-label="Քանակ">
-      <button type="button" data-step="1" aria-label="Ավելացնել">${icon('plus', 'icon-sm')}</button>
+      <button type="button" data-step="-1" aria-label="${t('step.minus')}">${icon('minus', 'icon-sm')}</button>
+      <input type="number" inputmode="numeric" min="0" max="9999" value="${qty}" aria-label="${t('step.qty')}">
+      <button type="button" data-step="1" aria-label="${t('step.plus')}">${icon('plus', 'icon-sm')}</button>
     </div>`;
   }
   /* One delegated handler for every stepper on the page; `onChange(vid, qty)` decides what a change means. */
@@ -288,7 +414,7 @@
     $$(`[data-wish="${id}"]`).forEach((b) => b.setAttribute('aria-pressed', i === -1));
     updateBadges();
     if (page === 'wishlist') pages.wishlist();
-    else toast(i === -1 ? 'Ավելացվեց հիշվածներին' : 'Հեռացվեց հիշվածներից', { href: 'wishlist.html', label: 'Դիտել' });
+    else toast(t(i === -1 ? 'wish.added' : 'wish.removed'), { href: 'wishlist.html', label: t('nav.view') });
   });
 
   const emptyState = (ic, title, text, btn, ok) => `
@@ -298,7 +424,7 @@
       <p class="muted">${text}</p>
       ${btn ? `<a class="btn btn-primary" href="${btn.href}">${btn.label}</a>` : ''}
     </div>`;
-  const loginGate = (text) => emptyState('lock', 'Մուտք գործեք', text, { href: `login.html?next=${page}`, label: 'Մուտք' });
+  const loginGate = (text) => emptyState('lock', t('gate.title'), text, { href: `login.html?next=${page}`, label: t('login.submit') });
 
   /* ---------- Home hero: hand-painted clouds drifting to the right, forever ---------- */
   function heroClouds(root) {
@@ -342,39 +468,41 @@
       $('#catGrid').innerHTML = DATA.categories.filter((c) => !c.parent).map((c) => `
         <a class="cat-card" href="shop.html?cat=${c.slug}">
           <div class="ph"><img loading="lazy" src="${c.image}" alt=""></div>
-          <div><strong>${esc(c.name)}</strong><small>${c.count} ապրանք</small></div>
+          <div><strong>${esc(c.name)}</strong><small>${t('count.products', { n: c.count })}</small></div>
         </a>`).join('');
       $('#bestGrid').innerHTML = cards(pick(DATA.home.bestsellers));
       $('#newGrid').innerHTML = cards(pick(DATA.home.newest));
-      $('#promoA').innerHTML = `<img src="${productById.get(11145).image}" alt="">`;
-      $('#promoB').innerHTML = `<img src="${productById.get(11858).image}" alt="">`;
+      /* Promo photos: the first two different products of the home selections */
+      const promo = [...new Set([...DATA.home.bestsellers, ...DATA.home.newest])].map((id) => productById.get(id)).filter((p) => p && p.image);
+      $('#promoA').innerHTML = promo[0] ? `<img src="${promo[0].image}" alt="">` : '';
+      $('#promoB').innerHTML = promo[1] ? `<img src="${promo[1].image}" alt="">` : '';
       heroClouds($('#heroMedia'));
       const cta = $('#ctaActions');
       cta.innerHTML = state.authed
-        ? '<a class="btn btn-on-red" href="shop.html">Անցնել խանութ</a><a class="btn btn-ghost-on-red" href="account.html">Իմ պատվերները</a>'
-        : '<a class="btn btn-on-red" href="login.html">Մուտք</a><a class="btn btn-ghost-on-red" href="signup.html">Դառնալ հաճախորդ</a>';
-      if (state.authed) $('#ctaText').textContent = 'Գները բաց են ձեզ համար։ Հավաքեք պատվերը մի քանի րոպեում։';
+        ? `<a class="btn btn-on-red" href="shop.html">${t('nav.toShop')}</a><a class="btn btn-ghost-on-red" href="account.html">${t('nav.myOrders')}</a>`
+        : `<a class="btn btn-on-red" href="login.html">${t('login.submit')}</a><a class="btn btn-ghost-on-red" href="signup.html">${t('nav.signup')}</a>`;
+      if (state.authed) $('#ctaText').textContent = t('home.ctaClient');
     },
 
     shop() {
       const slug = params.get('cat'), q = (params.get('q') || '').trim();
       const cat = catBySlug.get(slug);
-      const all = { slug: '', name: 'Բոլորը', count: DATA.products.length };
+      const all = { slug: '', name: t('shop.all'), count: DATA.products.length };
       $('#chips').innerHTML = [all, ...DATA.categories].map((c) =>
         `<a class="chip" href="shop.html${c.slug ? '?cat=' + c.slug : ''}" aria-current="${(c.slug || null) === (slug || null) && !q}">${esc(c.name)} <small>${c.count}</small></a>`).join('');
-      $('#shopTitle').textContent = q ? `Որոնում՝ «${q}»` : cat ? cat.name : 'Խանութ';
-      $('#crumbHere').textContent = cat ? cat.name : 'Խանութ';
-      if (state.authed) $('#sort').insertAdjacentHTML('beforeend', '<option value="price">Գինը՝ աճման կարգով</option>');
+      $('#shopTitle').textContent = q ? t('shop.searchTitle', { q }) : cat ? cat.name : t('nav.shop');
+      $('#crumbHere').textContent = cat ? cat.name : t('nav.shop');
+      if (state.authed) $('#sort').insertAdjacentHTML('beforeend', `<option value="price">${t('shop.sortPrice')}</option>`);
 
       let list = DATA.products.filter((p) => (!cat || p.cats.includes(cat.slug)) && (!q || p.name.toLowerCase().includes(q.toLowerCase())));
-      const minPrice = (p) => Math.min(...p.variations.map((v) => PRICES[v.id]));
+      const minPrice = (p) => Math.min(...p.variations.map((v) => PRICES[v.id] ?? Infinity));
       const draw = () => {
         const mode = $('#sort').value;
-        const sorted = [...list].sort(mode === 'name' ? (a, b) => a.name.localeCompare(b.name, 'hy')
+        const sorted = [...list].sort(mode === 'name' ? (a, b) => a.name.localeCompare(b.name, lang)
           : mode === 'price' ? (a, b) => minPrice(a) - minPrice(b) : (a, b) => b.id - a.id);
-        $('#count').textContent = `${sorted.length} ապրանք`;
+        $('#count').textContent = t('count.products', { n: sorted.length });
         $('#shopGrid').innerHTML = cards(sorted);
-        $('#shopEmpty').innerHTML = sorted.length ? '' : emptyState('search', 'Ոչինչ չի գտնվել', 'Փորձեք այլ բառ կամ ընտրեք բաժիններից մեկը։', { href: 'shop.html', label: 'Բոլոր ապրանքները' });
+        $('#shopEmpty').innerHTML = sorted.length ? '' : emptyState('search', t('search.none'), t('shop.emptyText'), { href: 'shop.html', label: t('nav.allProducts') });
       };
       $('#sort').addEventListener('change', draw);
       draw();
@@ -384,17 +512,17 @@
       const wanted = params.get('id');
       const p = wanted ? productById.get(Number(wanted)) : DATA.products[0];
       if (!p) {   // unknown or removed product
-        document.title = 'Ապրանքը չի գտնվել · JoyGroup';
-        $('#crumbs').innerHTML = '<a href="index.html">Գլխավոր</a><span aria-hidden="true">/</span><a href="shop.html">Խանութ</a>';
+        document.title = `${t('product.notFound')} · JoyGroup`;
+        $('#crumbs').innerHTML = `<a href="index.html">${t('nav.home')}</a><span aria-hidden="true">/</span><a href="shop.html">${t('nav.shop')}</a>`;
         const box = $('.product'); box.classList.remove('product');
-        box.innerHTML = emptyState('search', 'Ապրանքը չի գտնվել', 'Հնարավոր է՝ այն հանվել է տեսականուց, կամ հղումը սխալ է։', { href: 'shop.html', label: 'Անցնել խանութ' });
-        $('#relatedTitle').textContent = 'Նոր ապրանքներ';
+        box.innerHTML = emptyState('search', t('product.notFound'), t('product.notFoundText'), { href: 'shop.html', label: t('nav.toShop') });
+        $('#relatedTitle').textContent = t('product.newest');
         $('#related').innerHTML = cards(DATA.home.newest.slice(0, 4).map((id) => productById.get(id)).filter(Boolean));
         return;
       }
-      const cat = mainCat(p), range = priceRange(p);
+      const cat = mainCat(p) || { slug: '', name: t('nav.shop') }, range = priceRange(p);
       document.title = `${p.name} · JoyGroup`;
-      $('#crumbs').innerHTML = `<a href="index.html">Գլխավոր</a><span aria-hidden="true">/</span>
+      $('#crumbs').innerHTML = `<a href="index.html">${t('nav.home')}</a><span aria-hidden="true">/</span>
         <a href="shop.html?cat=${cat.slug}">${esc(cat.name)}</a><span aria-hidden="true">/</span><span>${esc(p.name)}</span>`;
 
       const setMain = (src) => {
@@ -412,7 +540,7 @@
       $('#gallery').innerHTML = `
         <div class="gallery-main"><img id="mainImg" src="${p.image}" alt="${esc(p.name)}"></div>
         ${p.gallery.length > 1 ? `<div class="thumbs" id="thumbs">${p.gallery.map((src) =>
-          `<button type="button" data-src="${src}" aria-current="${src === p.image}" aria-label="Լուսանկար"><img loading="lazy" src="${src}" alt=""></button>`).join('')}</div>` : ''}`;
+          `<button type="button" data-src="${src}" aria-current="${src === p.image}" aria-label="${t('product.photo')}"><img loading="lazy" src="${src}" alt=""></button>`).join('')}</div>` : ''}`;
 
       const qty = {};   // picked quantities on this page, before they go to the cart
       const variantTile = (v) => {
@@ -423,7 +551,7 @@
         return `<div class="variant${v.inStock ? '' : ' sold'}" data-variant="${v.id}">
           ${photo}
           <div class="v-name">${esc(v.option)}</div>
-          ${!v.inStock ? '<div class="v-price">Առկա չէ</div>'
+          ${!canOrder(v) ? `<div class="v-price">${t('stock.out')}</div>`
             : price !== undefined ? `<div class="v-price">${money(price)}</div>${stepper(v.id, 0)}` : ''}
         </div>`;
       };
@@ -431,28 +559,28 @@
       $('#info').innerHTML = `
         <div class="tags">
           <a class="tag tag-purple" href="shop.html?cat=${cat.slug}">${esc(cat.name)}</a>
-          <span class="tag${p.inStock ? '' : ' tag-sold'}">${p.inStock ? 'Առկա է' : 'Առկա չէ'}</span>
+          <span class="tag${p.inStock ? '' : ' tag-sold'}">${t(p.inStock ? 'stock.in' : 'stock.out')}</span>
         </div>
         <h1>${esc(p.name)}</h1>
-        ${range ? `<div class="price-line">${range} <small>/ հատը</small></div>` : `
+        ${range ? `<div class="price-line">${range} <small>${t('product.perPiece')}</small></div>` : `
           <div class="guest-box">
-            <div class="row">${icon('lock')}<div><strong>Գները տեսանելի են միայն հաճախորդներին</strong>
-              <p class="muted">Մուտք գործեք՝ գները տեսնելու և պատվեր ձևակերպելու համար։</p></div></div>
-            <div class="actions"><a class="btn btn-primary" href="login.html?next=product&id=${p.id}">Մուտք</a>
-              <a class="btn btn-secondary" href="signup.html">Դառնալ հաճախորդ</a></div>
+            <div class="row">${icon('lock')}<div><strong>${t('product.guestTitle')}</strong>
+              <p class="muted">${t('login.lead')}</p></div></div>
+            <div class="actions"><a class="btn btn-primary" href="login.html?next=product&id=${p.id}">${t('login.submit')}</a>
+              <a class="btn btn-secondary" href="signup.html">${t('nav.signup')}</a></div>
           </div>`}
-        ${p.single ? (range && p.inStock ? `<div class="variants-head"><h2>Քանակ</h2></div>${stepper(p.variations[0].id, 0, 'stepper-lg')}` : '') : `
+        ${p.single ? (range && canOrder(p) ? `<div class="variants-head"><h2>${t('step.qty')}</h2></div>${stepper(p.variations[0].id, 0, 'stepper-lg')}` : '') : `
           <div class="variants-head"><h2>${p.optionLabel}</h2><span class="muted">${variantCount(p.variations.length)}</span></div>
           <div class="variants">${p.variations.map(variantTile).join('')}</div>`}
-        ${range && p.inStock ? `
+        ${range && canOrder(p) ? `
           <div class="order-bar">
-            <div class="sum"><small id="barQty">Ընտրեք քանակը</small><strong id="barSum">0 ֏</strong></div>
-            <button class="btn btn-on-red" id="addBtn" type="button" disabled>${icon('bag', 'icon-sm')} Ավելացնել զամբյուղ</button>
+            <div class="sum"><small id="barQty">${t('product.pickQty')}</small><strong id="barSum">0 ֏</strong></div>
+            <button class="btn btn-on-red" id="addBtn" type="button" disabled>${icon('bag', 'icon-sm')} ${t('product.add')}</button>
           </div>` : ''}
         <dl class="specs">
-          <div><dt>Կատեգորիա</dt><dd>${p.cats.map((s) => esc(catBySlug.get(s).name)).join(', ')}</dd></div>
+          <div><dt>${t('product.category')}</dt><dd>${p.cats.map((s) => catBySlug.get(s)).filter(Boolean).map((c) => esc(c.name)).join(', ')}</dd></div>
           ${p.single ? '' : `<div><dt>${p.optionLabel}</dt><dd>${variantCount(p.variations.length)}</dd></div>`}
-          <div><dt>Առկայություն</dt><dd>${p.inStock ? 'Առկա է' : 'Առկա չէ'}</dd></div>
+          <div><dt>${t('product.availability')}</dt><dd>${t(p.inStock ? 'stock.in' : 'stock.out')}</dd></div>
         </dl>`;
 
       document.addEventListener('click', (e) => {
@@ -463,8 +591,8 @@
       const refreshBar = () => {
         const picked = Object.entries(qty).filter(([, n]) => n > 0);
         const count = picked.reduce((s, [, n]) => s + n, 0);
-        const sum = picked.reduce((s, [vid, n]) => s + n * PRICES[vid], 0);
-        $('#barQty').textContent = count ? `${count} հատ · ${variantCount(picked.length)}` : 'Ընտրեք քանակը';
+        const sum = round2(picked.reduce((s, [vid, n]) => s + n * PRICES[vid], 0));   // preview only; the cart shows the server's totals
+        $('#barQty').textContent = count ? `${t('count.pcs', { n: count })} · ${variantCount(picked.length)}` : t('product.pickQty');
         $('#barSum').textContent = money(sum);
         $('#addBtn').disabled = !count;
       };
@@ -485,7 +613,7 @@
         $$('#info [data-stepper] input').forEach((i) => { i.value = 0; });
         $$('#info .variant').forEach((t) => t.classList.remove('has-qty'));
         refreshBar();
-        toast(`${added} հատ ավելացվեց զամբյուղ`, { href: 'cart.html', label: 'Զամբյուղ' });
+        toast(t('product.added', { n: added }), { href: 'cart.html', label: t('nav.cart') });
       });
 
       const related = DATA.products.filter((x) => x.id !== p.id && x.cats.includes(cat.slug)).slice(0, 4);
@@ -494,33 +622,42 @@
 
     cart() {
       const root = $('#cartRoot');
-      const draw = () => {
-        if (!state.authed) { root.innerHTML = loginGate('Զամբյուղը և գները հասանելի են միայն գրանցված հաճախորդներին։'); return; }
-        const lines = cartLines();
-        if (!lines.length) {
-          root.innerHTML = emptyState('bag', 'Զամբյուղը դատարկ է', 'Ընտրեք ապրանքներ խանութից և ավելացրեք այստեղ։', { href: 'shop.html', label: 'Անցնել խանութ' });
-          return;
-        }
+      let seq = 0;   // only the latest answer is drawn when the client clicks fast
+      const draw = async () => {
+        if (!state.authed) { root.innerHTML = loginGate(t('cart.gate')); return; }
+        const empty = () => { root.innerHTML = emptyState('bag', t('cart.empty'), t('cart.emptyText'), { href: 'shop.html', label: t('nav.toShop') }); };
+        if (!cartItems().length) return empty();
+        const my = ++seq;
+        let quote;
+        try { quote = await quoteCart(); } catch (e) { if (my === seq) fail(e); return; }
+        if (my !== seq) return;
+        if (!quote.lines.length) return empty();
         root.innerHTML = `
           <div class="split">
-            <div class="panel">${lines.map((l) => `
+            <div class="panel">${quote.lines.map((l) => {
+              const known = variationIndex.get(String(l.variation_id)), single = known ? known.p.single : false;
+              const label = known ? known.p.optionLabel : t('cart.variant');
+              return `
               <div class="line">
-                <a class="l-ph" href="product.html?id=${l.p.id}"><img src="${l.v.image || l.p.image}" alt=""></a>
-                <div class="l-text"><div class="l-name"><a href="product.html?id=${l.p.id}">${esc(l.p.name)}</a></div>
-                  <div class="l-meta">${l.p.single ? '' : esc(l.p.optionLabel + '՝ ' + l.v.option) + ' · '}${money(PRICES[l.vid])}</div></div>
-                ${stepper(l.vid, l.qty)}
-                <div class="l-total">${money(l.qty * PRICES[l.vid])}</div>
-                <button class="icon-btn l-del" type="button" data-remove="${l.vid}" aria-label="Հեռացնել">${icon('trash', 'icon-sm')}</button>
-              </div>`).join('')}
+                <a class="l-ph" href="product.html?id=${l.product_id}"><img src="${l.image || (known && known.p.image) || ''}" alt=""></a>
+                <div class="l-text"><div class="l-name"><a href="product.html?id=${l.product_id}">${esc(l.name)}</a></div>
+                  <div class="l-meta">${single || !l.option ? '' : esc(t('cart.option', { label, option: l.option })) + ' · '}${money(l.unit_price)}${l.in_stock ? '' : ' · ' + t('stock.out')}</div></div>
+                ${stepper(l.variation_id, l.quantity)}
+                <div class="l-total">${money(l.total)}</div>
+                <button class="icon-btn l-del" type="button" data-remove="${l.variation_id}" aria-label="${t('cart.remove')}">${icon('trash', 'icon-sm')}</button>
+              </div>`;
+            }).join('')}
             </div>
             <aside class="panel aside">
-              <h2 class="h-md">Պատվերի ամփոփում</h2>
+              <h2 class="h-md">${t('cart.summary')}</h2>
               <div class="sum-rows">
-                <div><span class="muted">Ապրանքներ</span><span>${lines.length} տող · ${cartQty()} հատ</span></div>
-                <div class="total"><span>Ընդամենը</span><span>${money(cartTotal())}</span></div>
+                <div><span class="muted">${t('cart.items')}</span><span>${t('count.lines', { n: quote.lines.length })} · ${t('count.pcs', { n: quote.quantity })}</span></div>
+                <div><span class="muted">${t('sum.withoutVat')}</span><span>${money(quote.total_without_vat)}</span></div>
+                <div><span class="muted">${t('sum.vat')}</span><span>${money(quote.vat)}</span></div>
+                <div class="total"><span>${t('sum.total')}</span><span>${money(quote.total)}</span></div>
               </div>
-              <a class="btn btn-primary btn-block" href="checkout.html">Ձևակերպել պատվերը</a>
-              <a class="btn btn-secondary btn-block" href="shop.html" style="margin-top:10px">Շարունակել գնումները</a>
+              <a class="btn btn-primary btn-block" href="checkout.html">${t('cart.checkout')}</a>
+              <a class="btn btn-secondary btn-block" href="shop.html" style="margin-top:10px">${t('cart.continue')}</a>
             </aside>
           </div>`;
       };
@@ -529,79 +666,125 @@
         const b = e.target.closest('[data-remove]'); if (!b) return;
         delete state.cart[b.dataset.remove]; saveCart(); draw();
       });
-      draw();
+      return draw();
     },
 
-    checkout() {
+    async checkout() {
       const root = $('#checkoutRoot');
-      if (!state.authed) { root.innerHTML = loginGate('Պատվեր ձևակերպելու համար անհրաժեշտ է մուտք գործել։'); return; }
-      const lines = cartLines();
-      if (!lines.length) { root.innerHTML = emptyState('bag', 'Զամբյուղը դատարկ է', 'Պատվեր ձևակերպելու համար նախ ավելացրեք ապրանքներ։', { href: 'shop.html', label: 'Անցնել խանութ' }); return; }
-      $('#sumLines').innerHTML = lines.map((l) =>
-        `<div><span>${esc(l.p.name)}${l.p.single ? '' : ' · ' + esc(l.v.option)} × ${l.qty}</span><span>${money(l.qty * PRICES[l.vid])}</span></div>`).join('');
-      $('#sumTotal').textContent = money(cartTotal());
-      $('#sumCount').textContent = `${cartQty()} հատ`;
-      $('#checkoutForm').addEventListener('submit', (e) => {
+      if (!state.authed) { root.innerHTML = loginGate(t('checkout.gate')); return; }
+      const emptyCart = () => { root.innerHTML = emptyState('bag', t('cart.empty'), t('checkout.emptyText'), { href: 'shop.html', label: t('nav.toShop') }); };
+      if (!cartItems().length) return emptyCart();
+
+      /* One key per opened checkout page: a double click or a retry after a lost answer returns the same order. */
+      const key = window.crypto && crypto.randomUUID ? crypto.randomUUID()
+        : Date.now().toString(36) + Math.random().toString(36).slice(2, 12);
+      let quote, profile;
+      try {
+        [quote, { data: { profile } }] = await Promise.all([quoteCart(), api('/auth/me')]);
+      } catch (e) { return fail(e); }
+      saveProfile(profile);
+      if (!quote.lines.length) return emptyCart();
+
+      const drawSummary = (q) => {
+        $('#sumLines').innerHTML = q.lines.map((l) =>
+          `<div><span>${esc(l.name)}${l.option ? ' · ' + esc(l.option) : ''} × ${l.quantity}</span><span>${money(l.total)}</span></div>`).join('');
+        $('#sumCount').textContent = t('count.pcs', { n: q.quantity });
+        $('#sumNet').textContent = money(q.total_without_vat);
+        $('#sumVat').textContent = money(q.vat);
+        $('#sumTotal').textContent = money(q.total);
+      };
+      drawSummary(quote);
+
+      const org = profile.organization || {};
+      $('#buyer').innerHTML = `
+        <div class="field"><label>${t('org.name')}</label><input class="input" value="${esc(org.legal_name || org.trade_name || '')}" readonly></div>
+        <div class="field"><label>${t('org.tin')}</label><input class="input" value="${esc(org.tin || '—')}" readonly></div>`;
+      const addrs = profile.delivery_addresses || [];
+      $('#addresses').innerHTML = addrs.length
+        ? addrs.map((a) => `<label class="radio-card"><input type="radio" name="addr" value="${a.id}"${a.id === profile.default_delivery_address_id || addrs.length === 1 ? ' checked' : ''}>
+            <span><strong>${esc(a.label || a.address)}</strong>${a.label ? `<small>${esc(a.address)}</small>` : ''}</span></label>`).join('')
+        : `<p class="muted">${t('checkout.addressByManager')}</p>`;
+
+      const form = $('#checkoutForm'), btn = $('button[type="submit"]', form);
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        const num = 'JG-' + String(Date.now()).slice(-6);
-        state.cart = {}; saveCart();
-        root.innerHTML = emptyState('check', 'Շնորհակալություն, պատվերն ընդունված է', `Պատվերի համարը՝ ${num}։ Մենեջերը կկապվի ձեզ հետ հաստատման համար։ Հարցերի դեպքում՝ ${CONTACT.phone}։`, { href: 'account.html', label: 'Իմ պատվերները' }, true);
-        window.scrollTo({ top: 0 });
+        if (btn.disabled) return;   // already sending
+        const picked = $('input[name="addr"]:checked', form);
+        if (addrs.length && !picked) return toast(t('checkout.pickAddress'));
+        const note = $('#c7').value.trim();
+        btn.disabled = true;
+        try {
+          const { data } = await api('/client/orders', {
+            method: 'POST',
+            headers: { 'Idempotency-Key': key },
+            body: { items: cartItems(), ...(picked ? { delivery_address_id: Number(picked.value) } : {}), ...(note ? { note } : {}) },
+          });
+          state.cart = {}; saveCart();
+          root.innerHTML = emptyState('check', t('checkout.thanks'), t('checkout.thanksText', { number: esc(data.order.number), phone: CONTACT.phone }), { href: 'account.html', label: t('nav.myOrders') }, true);
+          window.scrollTo({ top: 0 });
+        } catch (err) {
+          btn.disabled = false;
+          if (err.code === 'items_unavailable') {
+            (err.data.unavailable || []).forEach((vid) => { delete state.cart[vid]; });
+            saveCart();
+            toast(err.message, { href: 'cart.html', label: t('nav.cart') });
+            if (!cartItems().length) return emptyCart();
+            try { const q = await quoteCart(); return q.lines.length ? drawSummary(q) : emptyCart(); } catch (ex) { return fail(ex); }
+          }
+          fail(err);
+        }
       });
     },
 
-    account() {
+    async account() {
       const root = $('#accountRoot');
-      if (!state.authed) { root.innerHTML = loginGate('Անձնական էջը հասանելի է միայն գրանցված հաճախորդներին։'); return; }
-      /* Sample orders so the screen can be designed; the real list comes from the backend. */
-      const sample = [
-        { num: 'JG-204518', date: '28.09.2026', status: 'Ընթացքում', tag: 'tag-purple', items: [[11146, 20], [11108, 20], [10609, 12]] },
-        { num: 'JG-203977', date: '11.09.2026', status: 'Առաքված', tag: '', items: [[13500, 50], [13501, 50], [11859, 10]] },
-        { num: 'JG-203120', date: '22.08.2026', status: 'Ավարտված', tag: 'tag-sold', items: [[10719, 30], [11055, 30], [11374, 24], [11299, 15]] },
-      ].map((o) => {
-        const items = o.items.filter(([vid]) => variationIndex.has(String(vid)));
-        return { ...o, items, qty: items.reduce((s, [, n]) => s + n, 0), total: items.reduce((s, [vid, n]) => s + n * (PRICES[vid] || 0), 0) };
-      });
+      if (!state.authed) { root.innerHTML = loginGate(t('account.gate')); return; }
+      let profile, list;
+      try {
+        [{ data: { profile } }, { data: list }] = await Promise.all([api('/auth/me'), api('/client/orders')]);
+      } catch (e) { return fail(e); }
+      saveProfile(profile);
+      const org = profile.organization || {};
+      const person = profile.name || profile.login;
+      const initials = person.split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+      const TAGS = { new: 'tag-purple', processing: 'tag-purple', awaiting_payment: 'tag-purple', cancelled: 'tag-sold', completed: 'tag-sold' };
+      const date = (iso) => new Date(iso).toLocaleDateString('ru-RU');
+      const orderRow = (o) => `
+        <div class="order">
+          <div><strong>№ ${esc(o.number)}</strong><small>${date(o.placed_at)}</small></div>
+          <div><span class="tag ${TAGS[o.status] || ''}">${esc(o.status_label)}</span></div>
+          <div>${t('count.pcs', { n: o.quantity })}<small>${t('count.lines', { n: o.lines_count })}</small></div>
+          <div><strong>${money(o.total)}</strong></div>
+          <div class="acts">
+            <button class="btn btn-secondary btn-sm" type="button" data-repeat="${esc(o.number)}">${icon('repeat', 'icon-sm')} ${t('account.repeat')}</button>
+            <button class="btn btn-secondary btn-sm" type="button" data-invoice>${icon('file', 'icon-sm')} ${t('account.invoice')}</button>
+          </div>
+        </div>`;
+      const more = () => (list.pagination.page < list.pagination.pages
+        ? `<div style="margin-top:16px"><button class="btn btn-secondary btn-sm" type="button" id="moreOrders">${t('account.more')}</button></div>` : '');
+      const field = (id, label, value) => `<div class="field"><label for="${id}">${label}</label><input class="input" id="${id}" value="${esc(value || '—')}" readonly></div>`;
       const views = {
         orders: () => `
           <div class="stat-row">
-            <div class="stat block-purple"><strong>${sample.length}</strong>պատվեր</div>
-            <div class="stat block-green"><strong>${sample.reduce((s, o) => s + o.qty, 0)}</strong>հատ ապրանք</div>
-            <div class="stat block-white"><strong>${money(sample.reduce((s, o) => s + o.total, 0))}</strong>ընդհանուր գումար</div>
+            <div class="stat block-purple"><strong>${list.summary.orders}</strong>${t('account.statOrders', { n: list.summary.orders })}</div>
+            <div class="stat block-green"><strong>${list.summary.quantity}</strong>${t('account.statQty', { n: list.summary.quantity })}</div>
+            <div class="stat block-white"><strong>${money(list.summary.total)}</strong>${t('account.statTotal')}</div>
           </div>
           <div class="panel">
-            <h2 class="h-md" style="margin-bottom:8px">Իմ պատվերները</h2>
-            ${sample.map((o, i) => `
-              <div class="order">
-                <div><strong>${o.num}</strong><small>${o.date}</small></div>
-                <div><span class="tag ${o.tag}">${o.status}</span></div>
-                <div>${o.qty} հատ<small>${o.items.length} տող</small></div>
-                <div><strong>${money(o.total)}</strong></div>
-                <div class="acts">
-                  <button class="btn btn-secondary btn-sm" type="button" data-repeat="${i}">${icon('repeat', 'icon-sm')} Կրկնել</button>
-                  <button class="btn btn-secondary btn-sm" type="button" data-invoice>${icon('file', 'icon-sm')} Հաշիվ</button>
-                </div>
-              </div>`).join('')}
+            <h2 class="h-md" style="margin-bottom:8px">${t('nav.myOrders')}</h2>
+            <div id="orderList">${list.orders.length ? list.orders.map(orderRow).join('') : `<p class="muted">${t('account.noOrders')}</p>`}</div>
+            <div id="orderMore">${more()}</div>
           </div>`,
         profile: () => `
           <div class="panel">
-            <h2 class="h-md" style="margin-bottom:20px">Իմ տվյալները</h2>
-            <form class="form" id="profileForm">
-              <div class="form-row">
-                <div class="field"><label for="pf1">Անուն Ազգանուն</label><input class="input" id="pf1" value="Անի Սարգսյան"></div>
-                <div class="field"><label for="pf2">Խանութի անվանումը</label><input class="input" id="pf2" value="Տոնական աշխարհ"></div>
-              </div>
-              <div class="form-row">
-                <div class="field"><label for="pf3">Հեռախոս</label><input class="input" id="pf3" type="tel" value="+374 00 000000"></div>
-                <div class="field"><label for="pf4">Էլ. փոստ</label><input class="input" id="pf4" type="email" value="client@example.am"></div>
-              </div>
-              <div class="field"><label for="pf5">Առաքման հասցե</label><input class="input" id="pf5" value="Երևան"></div>
-              <div class="form-row">
-                <div class="field"><label for="pf6">Նոր գաղտնաբառ</label><input class="input" id="pf6" type="password" autocomplete="new-password"></div>
-                <div class="field"><label for="pf7">Կրկնել գաղտնաբառը</label><input class="input" id="pf7" type="password" autocomplete="new-password"></div>
-              </div>
-              <div><button class="btn btn-primary" type="submit">Պահպանել</button></div>
-            </form>
+            <h2 class="h-md" style="margin-bottom:20px">${t('account.myData')}</h2>
+            <div class="form">
+              <div class="form-row">${field('pf1', t('account.name'), profile.name)}${field('pf2', t('account.login'), profile.login)}</div>
+              <div class="form-row">${field('pf3', t('account.shopName'), org.trade_name)}${field('pf4', t('contact.phoneLabel'), profile.phone)}</div>
+              <div class="form-row">${field('pf5', t('org.name'), org.legal_name)}${field('pf6', t('org.tin'), org.tin)}</div>
+              ${(profile.delivery_addresses || []).map((a, i) => field(`pa${i}`, t('checkout.address'), (a.label ? a.label + ' — ' : '') + a.address)).join('')}
+              <p class="note note-purple">${t('account.changeNote', { phone: CONTACT.phone })}</p>
+            </div>
           </div>`,
       };
       const show = (name) => {
@@ -611,72 +794,94 @@
       root.innerHTML = `
         <div class="account">
           <aside class="panel">
-            <div class="user-chip"><div class="avatar">ԱՍ</div><div><strong>Անի Սարգսյան</strong><br><span class="muted" style="font-size:.875rem">Տոնական աշխարհ</span></div></div>
+            <div class="user-chip"><div class="avatar">${esc(initials)}</div><div><strong>${esc(person)}</strong><br><span class="muted" style="font-size:.875rem">${esc(org.trade_name || org.legal_name || '')}</span></div></div>
             <div class="side-nav" id="sideNav">
-              <button type="button" data-view="orders">${icon('box', 'icon-sm')} Պատվերներ</button>
-              <button type="button" data-view="profile">${icon('user', 'icon-sm')} Իմ տվյալները</button>
-              <a href="wishlist.html">${icon('heart', 'icon-sm')} Հիշվածներ</a>
-              <button type="button" id="logout">${icon('logout', 'icon-sm')} Ելք</button>
+              <button type="button" data-view="orders">${icon('box', 'icon-sm')} ${t('account.orders')}</button>
+              <button type="button" data-view="profile">${icon('user', 'icon-sm')} ${t('account.myData')}</button>
+              <a href="wishlist.html">${icon('heart', 'icon-sm')} ${t('nav.wishlist')}</a>
+              <button type="button" id="logout">${icon('logout', 'icon-sm')} ${t('account.logout')}</button>
             </div>
           </aside>
           <div id="accountView"></div>
         </div>`;
-      root.addEventListener('click', (e) => {
+      root.addEventListener('click', async (e) => {
         const v = e.target.closest('[data-view]'); if (v) return show(v.dataset.view);
         const r = e.target.closest('[data-repeat]');
         if (r) {
-          sample[r.dataset.repeat].items.forEach(([vid, n]) => { state.cart[vid] = (state.cart[vid] || 0) + n; });
-          saveCart(); return toast('Պատվերի ապրանքներն ավելացվեցին զամբյուղ', { href: 'cart.html', label: 'Զամբյուղ' });
+          r.disabled = true;
+          try {
+            const { data } = await api(`/client/orders/${encodeURIComponent(r.dataset.repeat)}`);
+            /* only what the client can still order: the cart page would drop the rest anyway */
+            const items = data.order.items.filter((it) => it.variation_id && variationIndex.has(String(it.variation_id)));
+            items.forEach((it) => { state.cart[it.variation_id] = (state.cart[it.variation_id] || 0) + it.quantity; });
+            saveCart();
+            const skipped = data.order.items.length - items.length;
+            toast(skipped ? t('account.repeatPartial', { added: items.length, skipped }) : t('account.repeatDone'), { href: 'cart.html', label: t('nav.cart') });
+          } catch (err) { fail(err); }
+          r.disabled = false;
+          return;
         }
-        if (e.target.closest('[data-invoice]')) return toast('Հաշիվը (PDF) կներբեռնվի այստեղից');
-        if (e.target.closest('#logout')) { store.set('jg_auth', false); location.href = 'index.html'; }
+        if (e.target.closest('#moreOrders')) {
+          try {
+            const { data } = await api(`/client/orders?page=${list.pagination.page + 1}`);
+            list = { ...data, orders: [...list.orders, ...data.orders] };
+            $('#orderList').insertAdjacentHTML('beforeend', data.orders.map(orderRow).join(''));
+            $('#orderMore').innerHTML = more();
+          } catch (err) { fail(err); }
+          return;
+        }
+        if (e.target.closest('[data-invoice]')) return toast(t('account.invoiceSoon'));
+        if (e.target.closest('#logout')) {
+          await api('/auth/logout', { method: 'POST' }).catch(() => {});
+          dropSession();
+          state.cart = {}; store.set('jg_cart', {});   // the next client on this computer starts with an empty cart
+          location.href = 'index.html';
+        }
       });
-      root.addEventListener('submit', (e) => { e.preventDefault(); toast('Տվյալները պահպանված են'); });
       show('orders');
     },
 
     wishlist() {
       const list = state.wish.map((id) => productById.get(id)).filter(Boolean);
       $('#wishGrid').innerHTML = cards(list);
-      $('#wishEmpty').innerHTML = list.length ? '' : emptyState('heart', 'Հիշված ապրանք չկա', 'Սեղմեք սրտիկի վրա՝ ապրանքը այստեղ պահելու համար։', { href: 'shop.html', label: 'Անցնել խանութ' });
+      $('#wishEmpty').innerHTML = list.length ? '' : emptyState('heart', t('wish.empty'), t('wish.emptyText'), { href: 'shop.html', label: t('nav.toShop') });
     },
 
     login() {
-      $('#loginForm').addEventListener('submit', (e) => {
+      const form = $('#loginForm'), btn = $('button[type="submit"]', form), err = $('#loginError');
+      form.addEventListener('submit', async (e) => {
         e.preventDefault();
-        $('#loginPanel').innerHTML = emptyState('lock', 'Մուտքը ժամանակավորապես անհասանելի է', `Գների և պատվերների համար զանգահարեք՝ ${CONTACT.phone}։`, { href: 'shop.html', label: 'Դիտել տեսականին' });
+        err.hidden = true; btn.disabled = true;
+        try {
+          const { data } = await api('/auth/login', { method: 'POST', body: { login: $('#l1').value.trim(), password: $('#l2').value, device_name: 'storefront' } });
+          saveSession(data.token, data.profile, $('#remember').checked);
+          const next = params.get('next'), id = params.get('id');
+          location.href = next && /^[a-z]+$/.test(next) ? `${next}.html${id ? '?id=' + encodeURIComponent(id) : ''}` : 'shop.html';
+        } catch (ex) {
+          btn.disabled = false;
+          err.textContent = ex.status === 422 && !ex.code && ex.data.errors ? t('login.fill') : ex.message;
+          err.hidden = false;
+        }
       });
       const flip = (reset) => { $('#loginPanel').hidden = reset; $('#resetPanel').hidden = !reset; };
       $('#toReset').addEventListener('click', () => flip(true));
       $('#toLogin').addEventListener('click', () => flip(false));
-      $('#resetForm').addEventListener('submit', (e) => {
-        e.preventDefault();
-        $('#resetPanel').innerHTML = emptyState('lock', 'Մուտքը ժամանակավորապես անհասանելի է', `Հարցերի դեպքում զանգահարեք՝ ${CONTACT.phone}։`, { href: 'shop.html', label: 'Դիտել տեսականին' });
-      });
+      $('#resetText').innerHTML = t('login.resetText', { phone: `<a class="link" href="${CONTACT.phoneHref}">${CONTACT.phone}</a>` });
     },
 
+    /* No request forms: the backend does not take them. Visitors call or write to the manager instead. */
     signup() {
-      $('#signupForm').addEventListener('submit', (e) => {
-        e.preventDefault();
-        $('#signupPanel').innerHTML = emptyState('phone', 'Առցանց հայտերը դեռ չեն ընդունվում', `Հաճախորդ դառնալու համար զանգահարեք՝ ${CONTACT.phone}։`, { href: 'shop.html', label: 'Դիտել տեսականին' });
-        window.scrollTo({ top: 0 });
-      });
+      $('#signupContacts').innerHTML = contactRow('phone', t('contact.phoneLabel'), CONTACT.phone, CONTACT.phoneHref) +
+        contactRow('mail', t('contact.emailLabel'), CONTACT.email, `mailto:${CONTACT.email}`);
+      $('#signupHours').textContent = CONTACT.hours;
     },
 
     contact() {
-      const row = (ic, label, value, href) => {
-        const inner = `<span class="circle">${icon(ic)}</span><span><small>${label}</small>${value}</span>`;
-        return href ? `<a href="${href}">${inner}</a>` : `<div>${inner}</div>`;
-      };
       $('#contactList').innerHTML =
-        row('phone', 'Հեռախոս', CONTACT.phone, CONTACT.phoneHref) +
-        row('mail', 'Էլ. փոստ', CONTACT.email, `mailto:${CONTACT.email}`) +
-        row('pin', 'Հասցե', CONTACT.address) +
-        row('clock', 'Աշխատանքային ժամեր', CONTACT.hours);
-      $('#contactForm').addEventListener('submit', (e) => {
-        e.preventDefault();
-        $('#contactPanel').innerHTML = emptyState('phone', 'Հաղորդագրությունը չի ուղարկվել', `Կայքի այս տարբերակը դեռ չի ընդունում հաղորդագրություններ։ Զանգահարեք՝ ${CONTACT.phone} կամ գրեք՝ ${CONTACT.email}։`, null);
-      });
+        contactRow('phone', t('contact.phoneLabel'), CONTACT.phone, CONTACT.phoneHref) +
+        contactRow('mail', t('contact.emailLabel'), CONTACT.email, `mailto:${CONTACT.email}`) +
+        contactRow('pin', t('contact.addressLabel'), CONTACT.address) +
+        contactRow('clock', t('contact.hoursLabel'), CONTACT.hours);
     },
 
     notfound() { heroClouds($('#notFoundMedia')); },
@@ -684,50 +889,104 @@
     about() {
       heroClouds($('#aboutMedia'));
       $('#aboutActions').innerHTML = state.authed
-        ? '<a class="btn btn-on-red" href="shop.html">Անցնել խանութ</a>'
-        : '<a class="btn btn-on-red" href="signup.html">Դառնալ հաճախորդ</a><a class="btn btn-ghost-on-red" href="login.html">Մուտք</a>';
+        ? `<a class="btn btn-on-red" href="shop.html">${t('nav.toShop')}</a>`
+        : `<a class="btn btn-on-red" href="signup.html">${t('nav.signup')}</a><a class="btn btn-ghost-on-red" href="login.html">${t('login.submit')}</a>`;
 
       const tops = DATA.categories.filter((c) => !c.parent);
       const variants = DATA.products.reduce((n, p) => n + p.variations.length, 0);
-      $('#aboutStats').innerHTML = [[DATA.products.length, 'ապրանք'], [variants, 'տարբերակ'], [tops.length, 'բաժին']]
-        .map(([n, label]) => `<div class="about-stat"><strong>${n}</strong><span>${label}</span></div>`).join('');
+      $('#aboutStats').innerHTML = [[DATA.products.length, 'about.statProducts'], [variants, 'about.statVariants'], [tops.length, 'about.statSections']]
+        .map(([n, key]) => `<div class="about-stat"><strong>${n}</strong><span>${t(key, { n })}</span></div>`).join('');
 
       $('#aboutBento').innerHTML = tops.map((c, i) => `
         <a class="bento-tile${i < 2 ? ' big' : ''}" href="shop.html?cat=${c.slug}">
-          <div class="bento-text"><h3 class="h-md">${esc(c.name)}</h3><span class="muted">${c.count} ապրանք</span>
-            <span class="link-arrow">Դիտել ${icon('arrow', 'icon-sm')}</span></div>
+          <div class="bento-text"><h3 class="h-md">${esc(c.name)}</h3><span class="muted">${t('count.products', { n: c.count })}</span>
+            <span class="link-arrow">${t('nav.view')} ${icon('arrow', 'icon-sm')}</span></div>
           <div class="bento-ph"><img loading="lazy" src="${c.image}" alt=""></div>
         </a>`).join('');
 
       $('#aboutContact').innerHTML = `
         <div>
-          <p class="eyebrow">Կապ</p>
-          <h2 class="h-lg" style="margin-top:8px">Եկեք աշխատենք միասին</h2>
-          <p class="body-lg" style="margin-top:12px;max-width:44ch">Զանգահարեք, գրեք կամ այցելեք մեզ. կպատասխանենք բոլոր հարցերին։</p>
+          <p class="eyebrow">${t('about.contactEyebrow')}</p>
+          <h2 class="h-lg" style="margin-top:8px">${t('about.contactTitle')}</h2>
+          <p class="body-lg" style="margin-top:12px;max-width:44ch">${t('about.contactLead')}</p>
           <div class="actions">
-            <a class="btn btn-primary" href="${state.authed ? 'shop.html' : 'signup.html'}">${state.authed ? 'Անցնել խանութ' : 'Դառնալ հաճախորդ'}</a>
-            <a class="btn btn-secondary" href="contact.html">Գրել մեզ</a>
+            <a class="btn btn-primary" href="${state.authed ? 'shop.html' : 'signup.html'}">${t(state.authed ? 'nav.toShop' : 'nav.signup')}</a>
+            <a class="btn btn-secondary" href="contact.html">${t('about.write')}</a>
           </div>
         </div>
         <ul>
-          <li><a href="${CONTACT.phoneHref}">${icon('phone')}<span><small>Հեռախոս</small>${CONTACT.phone}</span></a></li>
-          <li><a href="mailto:${CONTACT.email}">${icon('mail')}<span><small>Էլ. փոստ</small>${CONTACT.email}</span></a></li>
-          <li><div>${icon('pin')}<span><small>Հասցե</small>${CONTACT.address}</span></div></li>
-          <li><div>${icon('clock')}<span><small>Աշխատանքային ժամեր</small>${CONTACT.hours}</span></div></li>
+          <li><a href="${CONTACT.phoneHref}">${icon('phone')}<span><small>${t('contact.phoneLabel')}</small>${CONTACT.phone}</span></a></li>
+          <li><a href="mailto:${CONTACT.email}">${icon('mail')}<span><small>${t('contact.emailLabel')}</small>${CONTACT.email}</span></a></li>
+          <li><div>${icon('pin')}<span><small>${t('contact.addressLabel')}</small>${CONTACT.address}</span></div></li>
+          <li><div>${icon('clock')}<span><small>${t('contact.hoursLabel')}</small>${CONTACT.hours}</span></div></li>
         </ul>`;
     },
   };
 
-  /* ---------- Boot ---------- */
-  renderHeader();
-  renderFooter();
-  if (pages[page]) pages[page]();
-  updateBadges();
+  /* ---------- Language switch ---------- */
+  /* Switching reloads the page, so the catalog and every text come again in the new language.
+     The cart and the login stay in browser storage; what the client typed or picked on this page is carried over. */
+  const fieldKey = (el) => {
+    const box = el.closest('[data-stepper]');
+    if (box) return `step:${box.dataset.stepper}`;
+    if (el.type === 'radio') return `radio:${el.name}:${el.value}`;
+    return el.id ? `id:${el.id}` : null;
+  };
+  const pageFields = () => $$('main input, main textarea, main select')
+    .filter((el) => fieldKey(el) && !el.readOnly && el.type !== 'password');
+  function keepPage() {
+    const fields = {};
+    pageFields().forEach((el) => { fields[fieldKey(el)] = el.type === 'radio' || el.type === 'checkbox' ? el.checked : el.value; });
+    const view = $('#sideNav [aria-current="true"]');
+    tabStore.set('jg_keep', { href: location.href, y: window.scrollY, fields, view: view ? view.dataset.view : null });
+  }
+  function restorePage() {
+    const keep = tabStore.get('jg_keep', null);
+    tabStore.del('jg_keep');
+    if (!keep || keep.href !== location.href) return;
+    const view = keep.view && $(`#sideNav [data-view="${keep.view}"]`);
+    if (view) view.click();
+    pageFields().forEach((el) => {
+      const k = fieldKey(el);
+      if (!(k in keep.fields)) return;
+      const checkable = el.type === 'radio' || el.type === 'checkbox';
+      if ((checkable ? el.checked : el.value) === keep.fields[k]) return;
+      if (checkable) el.checked = keep.fields[k]; else el.value = keep.fields[k];
+      el.dispatchEvent(new Event('change', { bubbles: true }));   // steppers and the sort pick it up as a change by hand
+    });
+    window.scrollTo({ top: keep.y, behavior: 'instant' });
+  }
+  document.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-lang]'); if (!b) return;
+    if (b.dataset.lang === lang) return;
+    store.set('jg_lang', b.dataset.lang);
+    keepPage();
+    location.reload();
+  });
 
+  /* ---------- Boot ---------- */
+  translatePage();
   $$('[data-icon]').forEach((el) => { el.outerHTML = icon(el.dataset.icon, el.className); });
 
   const io = 'IntersectionObserver' in window
     ? new IntersectionObserver((entries) => entries.forEach((en) => { if (en.isIntersecting) { en.target.classList.add('in'); io.unobserve(en.target); } }), { rootMargin: '0px 0px -8% 0px' })
     : null;
   $$('.reveal').forEach((el) => (io ? io.observe(el) : el.classList.add('in')));
+
+  /* Text pages work without the catalog; the rest show a "try again" state when the server cannot be reached. */
+  const NEEDS_CATALOG = ['home', 'shop', 'product', 'cart', 'checkout', 'account', 'wishlist', 'about'];
+  (async () => {
+    let failed = null;
+    try { useCatalog(await loadCatalog()); } catch (e) { failed = e; }
+    renderHeader();
+    renderFooter();
+    updateBadges();
+    if (failed && NEEDS_CATALOG.includes(page)) {
+      $('main').innerHTML = `<div class="wrap" style="margin-top:12px">${emptyState('box', t('err.pageTitle'), esc(failed.message), { href: location.href, label: t('err.reload') })}</div>`;
+      return;
+    }
+    if (pages[page]) await pages[page]();
+    updateBadges();
+    restorePage();
+  })();
 })();

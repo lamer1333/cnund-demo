@@ -140,6 +140,26 @@ ul { margin: 0; padding: 0; list-style: none; }
 .header-actions { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .header-actions .btn { margin-left: 8px; }
 
+/* Language switch ՀԱՅ / РУС: a white pill with two small chips, the active one navy (like .chip). */
+.lang-switch { display: inline-flex; gap: 2px; padding: 3px; margin-right: 6px; border-radius: var(--r-full); background: var(--surface); flex: none; }
+.lang-switch button {
+  height: 30px; padding: 0 10px; border-radius: var(--r-full);
+  font-size: 0.75rem; font-weight: 600; letter-spacing: 0.02em; color: var(--ink-muted);
+  transition: background-color 160ms ease, color 160ms ease, transform 120ms ease-out;
+}
+.lang-switch button:hover { color: var(--ink); }
+.lang-switch button:active { transform: scale(0.96); }
+.lang-switch button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.mobile-menu .lang-switch { margin: 24px 0 0; }
+.mobile-menu .lang-switch button { height: 40px; padding: 0 20px; font-size: 0.875rem; }
+/* Between the phone layout and full desktop the header row is already full: show only the other language, as a round icon button. */
+@media (min-width: 861px) and (max-width: 1100px) {
+  .site-header .lang-switch { padding: 0; margin-right: 0; background: none; }
+  .site-header .lang-switch button[aria-pressed="true"] { display: none; }
+  .site-header .lang-switch button { width: 44px; height: 44px; padding: 0; color: var(--ink); }
+  .site-header .lang-switch button:hover { background: rgba(13, 20, 69, 0.07); }
+}
+
 .nav-drop { position: relative; }
 /* Invisible bridge over the gap between the button and the menu, so the menu stays open while the cursor travels down. */
 .nav-drop.open::after { content: ""; position: absolute; left: -12px; right: -12px; top: 100%; height: 16px; }

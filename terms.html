@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>Առաքում և վերադարձ · JoyGroup</title>
+  <title data-i18n="title.terms"></title>
   <link rel="icon" type="image/png" href="assets/logo/favicon.png">
   <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -16,23 +16,24 @@
   <div id="header"></div>
   <main>
     <div class="wrap page-head">
-      <nav class="crumbs" aria-label="Ուղի"><a href="index.html">Գլխավոր</a><span aria-hidden="true">/</span><span>Առաքում և վերադարձ</span></nav>
-      <h1 class="h-lg">Առաքում և վերադարձ</h1>
-      <p class="muted">Պատվերի, առաքման, վճարման և վերադարձի հիմնական պայմանները։</p>
+      <nav class="crumbs" data-i18n-attr="aria-label:nav.crumbs"><a href="index.html" data-i18n="nav.home"></a><span aria-hidden="true">/</span><span data-i18n="nav.terms"></span></nav>
+      <h1 class="h-lg" data-i18n="nav.terms"></h1>
+      <p class="muted" data-i18n="terms.lead"></p>
     </div>
     <!-- The wording below is placeholder text: replace it with the owner's real terms. -->
     <div class="wrap" style="margin-top:16px">
       <div class="terms-grid">
-        <div class="feature"><div class="circle"><i data-icon="bag"></i></div><h2 class="h-md">Պատվեր</h2><p class="muted">Պատվերներն ընդունվում են կայքի միջոցով՝ գրանցված հաճախորդներից։ Պատվերը հաստատելուց հետո մենեջերը կապվում է ձեզ հետ։</p></div>
-        <div class="feature"><div class="circle"><i data-icon="box"></i></div><h2 class="h-md">Առաքում</h2><p class="muted">Առաքման ժամկետը և արժեքը համաձայնեցվում են մենեջերի հետ՝ պատվերը հաստատելիս։</p></div>
-        <div class="feature"><div class="circle"><i data-icon="file"></i></div><h2 class="h-md">Վճարում</h2><p class="muted">Վճարման եղանակն ընտրում եք պատվերը ձևակերպելիս։</p></div>
-        <div class="feature"><div class="circle"><i data-icon="repeat"></i></div><h2 class="h-md">Վերադարձ և փոխանակում</h2><p class="muted">Եթե ապրանքը վնասված է կամ չի համապատասխանում պատվերին, կապվեք մեզ հետ, և մենք կլուծենք հարցը։</p></div>
+        <div class="feature"><div class="circle"><i data-icon="bag"></i></div><h2 class="h-md" data-i18n="terms.orderTitle"></h2><p class="muted" data-i18n="terms.orderText"></p></div>
+        <div class="feature"><div class="circle"><i data-icon="box"></i></div><h2 class="h-md" data-i18n="terms.deliveryTitle"></h2><p class="muted" data-i18n="terms.deliveryText"></p></div>
+        <div class="feature"><div class="circle"><i data-icon="file"></i></div><h2 class="h-md" data-i18n="terms.paymentTitle"></h2><p class="muted" data-i18n="terms.paymentText"></p></div>
+        <div class="feature"><div class="circle"><i data-icon="repeat"></i></div><h2 class="h-md" data-i18n="terms.returnTitle"></h2><p class="muted" data-i18n="terms.returnText"></p></div>
       </div>
-      <div class="note note-purple" style="margin-top:20px"><i data-icon="phone" class="icon-sm"></i><span>Հարցեր ունե՞ք։ <a class="link" href="contact.html">Կապվեք մեզ հետ</a></span></div>
+      <div class="note note-purple" style="margin-top:20px"><i data-icon="phone" class="icon-sm"></i><span><span data-i18n="terms.question"></span> <a class="link" href="contact.html" data-i18n="terms.contactLink"></a></span></div>
     </div>
   </main>
   <div id="footer"></div>
-  <script src="js/data.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

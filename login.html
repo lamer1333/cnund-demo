@@ -4,7 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="robots" content="noindex, nofollow">
-  <title>Մուտք · JoyGroup</title>
+  <title data-i18n="title.login"></title>
   <link rel="icon" type="image/png" href="assets/logo/favicon.png">
   <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
@@ -19,46 +19,46 @@
       <div class="auth">
         <div class="panel">
           <div id="loginPanel">
-            <h1 class="h-lg">Մուտք</h1>
-            <p class="muted" style="margin:8px 0 24px">Մուտք գործեք՝ գները տեսնելու և պատվեր ձևակերպելու համար։</p>
+            <h1 class="h-lg" data-i18n="nav.login"></h1>
+            <p class="muted" style="margin:8px 0 24px" data-i18n="login.lead"></p>
             <form class="form" id="loginForm">
-              <div class="field"><label for="l1">Մուտքանուն կամ էլ. փոստի հասցե</label><input class="input" id="l1" required autocomplete="username"></div>
-              <div class="field"><label for="l2">Գաղտնաբառ</label><input class="input" id="l2" type="password" required autocomplete="current-password"></div>
+              <div class="field"><label for="l1" data-i18n="login.login"></label><input class="input" id="l1" required autocomplete="username"></div>
+              <div class="field"><label for="l2" data-i18n="login.password"></label><input class="input" id="l2" type="password" required autocomplete="current-password"></div>
               <div class="form-foot">
-                <label class="check"><input type="checkbox"> Հիշել ինձ</label>
-                <button class="link" type="button" id="toReset">Մոռացե՞լ եք գաղտնաբառը</button>
+                <label class="check"><input type="checkbox" id="remember" checked> <span data-i18n="login.remember"></span></label>
+                <button class="link" type="button" id="toReset" data-i18n="login.forgot"></button>
               </div>
-              <button class="btn btn-primary btn-block" type="submit">Մուտք</button>
+              <p class="note note-purple" id="loginError" role="alert" hidden></p>
+              <button class="btn btn-primary btn-block" type="submit" data-i18n="login.submit"></button>
             </form>
-            <p class="muted" style="margin-top:20px">Դեռ հաճախորդ չե՞ք։ <a class="link" href="signup.html">Ուղարկեք հայտ</a></p>
+            <p class="muted" style="margin-top:20px"><span data-i18n="login.notClient"></span> <a class="link" href="signup.html" data-i18n="login.apply"></a></p>
           </div>
           <div id="resetPanel" hidden>
-            <h1 class="h-lg">Գաղտնաբառի վերականգնում</h1>
-            <p class="muted" style="margin:8px 0 24px">Գրեք ձեր էլ. փոստի հասցեն, և մենք կուղարկենք վերականգնման հղումը։</p>
-            <form class="form" id="resetForm">
-              <div class="field"><label for="r1">Էլ. փոստի հասցե</label><input class="input" id="r1" type="email" required autocomplete="email"></div>
-              <button class="btn btn-primary btn-block" type="submit">Ուղարկել հղումը</button>
-              <button class="btn btn-secondary btn-block" type="button" id="toLogin">Վերադառնալ մուտքի էջ</button>
-            </form>
+            <h1 class="h-lg" data-i18n="login.resetTitle"></h1>
+            <p class="muted" style="margin:8px 0 24px" id="resetText"></p>
+            <div class="form">
+              <button class="btn btn-secondary btn-block" type="button" id="toLogin" data-i18n="login.back"></button>
+            </div>
           </div>
         </div>
         <div class="block block-red">
           <div>
-            <p class="eyebrow">JoyGroup · Մեծածախ</p>
-            <h2 class="h-lg" style="margin-top:10px">Բարի վերադարձ</h2>
+            <p class="eyebrow" data-i18n="perk.eyebrow"></p>
+            <h2 class="h-lg" style="margin-top:10px" data-i18n="login.welcome"></h2>
             <ul>
-              <li><i data-icon="check"></i><span>Մեծածախ գներ բոլոր ապրանքների համար</span></li>
-              <li><i data-icon="check"></i><span>Արագ պատվեր՝ մի քանի տարբերակ միանգամից</span></li>
-              <li><i data-icon="check"></i><span>Պատվերների պատմություն և կրկնում մեկ սեղմումով</span></li>
+              <li><i data-icon="check"></i><span data-i18n="perk.prices"></span></li>
+              <li><i data-icon="check"></i><span data-i18n="perk.fast"></span></li>
+              <li><i data-icon="check"></i><span data-i18n="perk.history"></span></li>
             </ul>
           </div>
-          <p class="muted">Մուտքի տվյալները տրամադրում է JoyGroup-ի մենեջերը։</p>
+          <p class="muted" data-i18n="login.credentialsNote"></p>
         </div>
       </div>
     </div>
   </main>
   <div id="footer"></div>
-  <script src="js/data.js"></script>
+  <script src="js/config.js"></script>
+  <script src="js/i18n.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
