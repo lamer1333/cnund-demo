@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="hy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Դառնալ հաճախորդ · JoyGroup</title>
+  <link rel="icon" type="image/png" href="assets/logo/favicon.png">
+  <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-page="signup">
+  <div id="header"></div>
+  <main>
+    <div class="wrap" style="margin-top:12px">
+      <div class="auth">
+        <div class="panel" id="signupPanel">
+          <h1 class="h-lg">Դառնալ հաճախորդ</h1>
+          <p class="muted" style="margin:8px 0 20px">Լրացրեք հայտը։ Հաստատումից հետո մենեջերը կուղարկի ձեր մուտքի տվյալները։</p>
+          <form class="form" id="signupForm">
+            <div class="form-row">
+              <div class="field"><label for="s1">Անուն Ազգանուն</label><input class="input" id="s1" required autocomplete="name"></div>
+              <div class="field"><label for="s2">Խանութի / կազմակերպության անվանումը</label><input class="input" id="s2" required autocomplete="organization"></div>
+            </div>
+            <div class="form-row">
+              <div class="field"><label for="s3">Հեռախոս</label><input class="input" id="s3" type="tel" required autocomplete="tel" placeholder="+374"></div>
+              <div class="field"><label for="s4">Էլ. փոստ</label><input class="input" id="s4" type="email" required autocomplete="email"></div>
+            </div>
+            <div class="field"><label for="s5">Քաղաք / բնակավայր</label><input class="input" id="s5" autocomplete="address-level2"></div>
+            <div class="field"><label for="s6">Մեկնաբանություն</label><textarea class="textarea" id="s6" placeholder="Ոչ պարտադիր"></textarea></div>
+            <div class="note"><i data-icon="lock" class="icon-sm"></i><span>Խանութը փակ է. հաշիվները ստեղծում է մենեջերը՝ հայտը դիտարկելուց հետո։</span></div>
+            <button class="btn btn-primary btn-block" type="submit">Ուղարկել հայտը</button>
+          </form>
+          <p class="muted" style="margin-top:20px">Արդեն հաճախորդ ե՞ք։ <a class="link" href="login.html">Մուտք</a></p>
+        </div>
+        <div class="block block-red">
+          <div>
+            <p class="eyebrow">JoyGroup · Մեծածախ</p>
+            <h2 class="h-lg" style="margin-top:10px">Միացեք JoyGroup-ի հաճախորդներին</h2>
+            <ul>
+              <li><i data-icon="check"></i><span>Մեծածախ գներ բոլոր ապրանքների համար</span></li>
+              <li><i data-icon="check"></i><span>Արագ պատվեր՝ մի քանի տարբերակ միանգամից</span></li>
+              <li><i data-icon="check"></i><span>Պատվերների պատմություն և կրկնում մեկ սեղմումով</span></li>
+            </ul>
+          </div>
+          <p class="muted">Հայտերը դիտարկվում են աշխատանքային օրերին։</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div id="footer"></div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

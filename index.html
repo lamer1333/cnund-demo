@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="hy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Ծննդյան պարագաներ · JoyGroup</title>
+  <link rel="icon" type="image/png" href="assets/logo/favicon.png">
+  <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-page="home">
+  <div id="header"></div>
+  <main>
+    <section class="hero-full">
+      <!-- Background animation slot: drop a <video>, <canvas> or <img> in here and it fills the whole hero behind the text. -->
+      <div class="hero-media" id="heroMedia" aria-hidden="true"></div>
+      <div class="wrap hero-copy">
+        <p class="eyebrow">JoyGroup · Ծննդյան պարագաներ</p>
+        <h1 class="display">Ամեն ինչ՝ կատարյալ տոնի համար</h1>
+        <p class="body-lg">Մոմեր, փուչիկներ, դեկորացիաներ և տոնական պարագաներ՝ մեկ վայրում։ Ընտրեք ձեր տոնի տրամադրությունը JoyGroup-ի հետ։</p>
+        <div class="actions"><a class="btn btn-on-red" href="shop.html">Դիտել տեսականին <i data-icon="arrow" class="icon-sm"></i></a></div>
+      </div>
+    </section>
+
+    <section class="wrap section reveal">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Տեսականի</p>
+          <h2 class="h-lg">Խանութն ըստ բաժինների</h2>
+          <p class="muted">Գտեք անհրաժեշտը արագ՝ ապրանքները դասավորված են ըստ կատեգորիաների</p>
+        </div>
+      </div>
+      <div class="cat-grid" id="catGrid"></div>
+    </section>
+
+    <section class="wrap section reveal">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Հաճախորդների ընտրություն</p>
+          <h2 class="h-lg">Ամենավաճառվող ապրանքներ</h2>
+        </div>
+        <a class="link-arrow" href="shop.html">Դիտել բոլորը <i data-icon="arrow" class="icon-sm"></i></a>
+      </div>
+      <div class="grid" id="bestGrid"></div>
+    </section>
+
+    <section class="wrap section reveal">
+      <div class="promo-pair">
+        <div class="block block-purple promo">
+          <div>
+            <h2 class="h-md">Թվեր և տառեր մոմեր</h2>
+            <p>Դարձրեք տարիքը տոնի գլխավոր զարդը՝ ոսկեգույն և արծաթագույն մոմերով։</p>
+            <a class="link-arrow" href="shop.html?cat=mom-tver-tarer">Ընտրել մոմերը <i data-icon="arrow" class="icon-sm"></i></a>
+          </div>
+          <div class="tile" id="promoA"></div>
+        </div>
+        <div class="block block-green promo">
+          <div>
+            <h2 class="h-md">Խլապուշկաներ և էֆեկտներ</h2>
+            <p>Փայլուն ավարտ յուրաքանչյուր անակնկալի համար՝ 35-ից 80 սմ։</p>
+            <a class="link-arrow" href="shop.html?cat=khlapushkaner">Դիտել բոլորը <i data-icon="arrow" class="icon-sm"></i></a>
+          </div>
+          <div class="tile" id="promoB"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="wrap section reveal">
+      <div class="section-head">
+        <div>
+          <p class="eyebrow">Նորույթներ</p>
+          <h2 class="h-lg">Վերջին ավելացված ապրանքներ</h2>
+        </div>
+        <a class="link-arrow" href="shop.html">Դիտել բոլորը <i data-icon="arrow" class="icon-sm"></i></a>
+      </div>
+      <div class="grid" id="newGrid"></div>
+    </section>
+
+    <section class="wrap section reveal">
+      <div class="block block-red cta">
+        <h2 class="h-lg">Պատրաստվու՞մ եք տոնի</h2>
+        <p class="body-lg muted" id="ctaText">Գրանցվեք կամ մուտք գործեք՝ գները տեսնելու և պատվեր ձևակերպելու համար։</p>
+        <div class="actions" id="ctaActions"></div>
+      </div>
+    </section>
+  </main>
+  <div id="footer"></div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

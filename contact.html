@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="hy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Կապ մեզ հետ · JoyGroup</title>
+  <link rel="icon" type="image/png" href="assets/logo/favicon.png">
+  <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-page="contact">
+  <div id="header"></div>
+  <main>
+    <div class="wrap page-head">
+      <nav class="crumbs" aria-label="Ուղի"><a href="index.html">Գլխավոր</a><span aria-hidden="true">/</span><span>Կապ մեզ հետ</span></nav>
+      <h1 class="h-lg">Կապ մեզ հետ</h1>
+      <p class="muted">Հարցեր ունե՞ք տեսականու, պատվերի կամ համագործակցության վերաբերյալ։ Գրեք կամ զանգահարեք մեզ։</p>
+    </div>
+    <div class="wrap" style="margin-top:16px">
+      <div class="split">
+        <div class="panel" id="contactPanel">
+          <h2 class="h-md" style="margin-bottom:20px">Գրեք մեզ</h2>
+          <form class="form" id="contactForm">
+            <div class="form-row">
+              <div class="field"><label for="k1">Անուն</label><input class="input" id="k1" required autocomplete="name"></div>
+              <div class="field"><label for="k2">Հեռախոս կամ էլ. փոստ</label><input class="input" id="k2" required></div>
+            </div>
+            <div class="field"><label for="k3">Հաղորդագրություն</label><textarea class="textarea" id="k3" required></textarea></div>
+            <div><button class="btn btn-primary" type="submit">Ուղարկել</button></div>
+          </form>
+        </div>
+        <aside class="panel aside">
+          <h2 class="h-md" style="margin-bottom:8px">Կոնտակտներ</h2>
+          <div class="contact-list" id="contactList"></div>
+        </aside>
+      </div>
+    </div>
+  </main>
+  <div id="footer"></div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

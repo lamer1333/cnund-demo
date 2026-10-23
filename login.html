@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="hy">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="robots" content="noindex, nofollow">
+  <title>Մուտք · JoyGroup</title>
+  <link rel="icon" type="image/png" href="assets/logo/favicon.png">
+  <link rel="apple-touch-icon" href="assets/logo/apple-touch-icon.png">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Google+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/styles.css">
+</head>
+<body data-page="login">
+  <div id="header"></div>
+  <main>
+    <div class="wrap" style="margin-top:12px">
+      <div class="auth">
+        <div class="panel">
+          <div id="loginPanel">
+            <h1 class="h-lg">Մուտք</h1>
+            <p class="muted" style="margin:8px 0 24px">Մուտք գործեք՝ գները տեսնելու և պատվեր ձևակերպելու համար։</p>
+            <form class="form" id="loginForm">
+              <div class="field"><label for="l1">Մուտքանուն կամ էլ. փոստի հասցե</label><input class="input" id="l1" required autocomplete="username"></div>
+              <div class="field"><label for="l2">Գաղտնաբառ</label><input class="input" id="l2" type="password" required autocomplete="current-password"></div>
+              <div class="form-foot">
+                <label class="check"><input type="checkbox"> Հիշել ինձ</label>
+                <button class="link" type="button" id="toReset">Մոռացե՞լ եք գաղտնաբառը</button>
+              </div>
+              <button class="btn btn-primary btn-block" type="submit">Մուտք</button>
+            </form>
+            <p class="muted" style="margin-top:20px">Դեռ հաճախորդ չե՞ք։ <a class="link" href="signup.html">Ուղարկեք հայտ</a></p>
+          </div>
+          <div id="resetPanel" hidden>
+            <h1 class="h-lg">Գաղտնաբառի վերականգնում</h1>
+            <p class="muted" style="margin:8px 0 24px">Գրեք ձեր էլ. փոստի հասցեն, և մենք կուղարկենք վերականգնման հղումը։</p>
+            <form class="form" id="resetForm">
+              <div class="field"><label for="r1">Էլ. փոստի հասցե</label><input class="input" id="r1" type="email" required autocomplete="email"></div>
+              <button class="btn btn-primary btn-block" type="submit">Ուղարկել հղումը</button>
+              <button class="btn btn-secondary btn-block" type="button" id="toLogin">Վերադառնալ մուտքի էջ</button>
+            </form>
+          </div>
+        </div>
+        <div class="block block-red">
+          <div>
+            <p class="eyebrow">JoyGroup · Մեծածախ</p>
+            <h2 class="h-lg" style="margin-top:10px">Բարի վերադարձ</h2>
+            <ul>
+              <li><i data-icon="check"></i><span>Մեծածախ գներ բոլոր ապրանքների համար</span></li>
+              <li><i data-icon="check"></i><span>Արագ պատվեր՝ մի քանի տարբերակ միանգամից</span></li>
+              <li><i data-icon="check"></i><span>Պատվերների պատմություն և կրկնում մեկ սեղմումով</span></li>
+            </ul>
+          </div>
+          <p class="muted">Մուտքի տվյալները տրամադրում է JoyGroup-ի մենեջերը։</p>
+        </div>
+      </div>
+    </div>
+  </main>
+  <div id="footer"></div>
+  <script src="js/data.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
